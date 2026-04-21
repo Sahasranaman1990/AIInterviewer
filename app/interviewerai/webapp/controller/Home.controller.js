@@ -11,7 +11,8 @@ sap.ui.define([
       this.getView().setModel(new JSONModel({
         messages: [],
         totalScore: 0,
-        count: 0
+        count: 0,
+         evaluation: ""
       }), "chat");
 
       this._initSpeech();
@@ -35,7 +36,18 @@ sap.ui.define([
     speechSynthesis.onvoiceschanged = load;
   }
 },
+_getFiller: function () {
 
+  const fillers = [
+    "Hmm… okay…",
+    "Alright… got it…",
+    "Interesting…",
+    "Makes sense…",
+    "Okay… I see…"
+  ];
+
+  return fillers[Math.floor(Math.random() * fillers.length)];
+},
     // 🎤 Speech Recognition
     _initSpeech: function () {
 
@@ -75,26 +87,40 @@ this.recognition.onresult = (event) => {
     },
 
     // 🔊 AI Speech (only question)
-speakText: async function (text) {
+speakText: function (text) {
 
-  let cleanText = text
-    .replace("Question:", "")
-    .replace("Next:", "")
-    .trim();
+  // 🔥 Extract only question
+  let clean = text.split("Next:")[1] || text;
+
+  clean = clean.trim();
+
+  // 🎯 Use Eleven only for short text
+  // if (clean.length < 120) {
+  //   this._speakWithEleven(clean);
+  // } else {
+    this._browserSpeak(clean);
+  // }
+},
+
+_speakWithEleven: async function (text) {
 
   try {
 
     const oModel = this.getView().getModel();
-
     const oAction = oModel.bindContext("/speak(...)");
 
-    oAction.setParameter("text", cleanText);
+    oAction.setParameter("text", text);
 
     await oAction.execute();
 
     const audioData = oAction.getBoundContext().getObject();
 
-    // 🎧 Convert binary → playable audio
+    // ❗ fallback if empty (quota over)
+    if (!audioData || !audioData.value || audioData.value.length === 0) {
+      this._browserSpeak(text);
+      return;
+    }
+
     const blob = new Blob([audioData.value], { type: "audio/mpeg" });
     const url = URL.createObjectURL(blob);
 
@@ -103,14 +129,47 @@ speakText: async function (text) {
     audio.play();
 
     audio.onended = () => {
-      if (this.recognition) {
-        setTimeout(() => this.recognition.start(), 200);
-      }
+      this._startListening();
     };
 
   } catch (e) {
-    console.error(e);
+
+    console.warn("Fallback to browser voice");
+
+    this._browserSpeak(text);
   }
+},
+_browserSpeak: function (text) {
+
+  const utter = new SpeechSynthesisUtterance(text);
+
+  const voices = speechSynthesis.getVoices();
+
+  const preferred = voices.find(v =>
+    v.name.includes("Google") ||
+    v.name.includes("Microsoft")
+  );
+
+  if (preferred) {
+    utter.voice = preferred;
+  }
+
+  utter.rate = 0.93;
+  utter.pitch = 1;
+
+  speechSynthesis.cancel();
+  speechSynthesis.speak(utter);
+
+  utter.onend = () => {
+    this._startListening();
+  };
+},
+_startListening: function () {
+  setTimeout(() => {
+    if (this.recognition) {
+      this.recognition.start();
+    }
+  }, 250);
 },
     // ▶ Start Interview
     onStartInterview: async function () {
@@ -143,7 +202,9 @@ speakText: async function (text) {
 
         chatModel.setProperty("/messages", messages);
 
-        this.speakText(aiReply);
+       setTimeout(() => {
+  this.speakText(aiReply);
+}, 300);
 
       } catch (e) {
         console.error(e);
@@ -159,9 +220,23 @@ _handleAnswer: async function (userInput) {
 
   try {
 
+    // ✅ STEP 1: Count check BEFORE API call
+    let count = chatModel.getProperty("/count") || 0;
+
+    if (count >= 8) {
+      this.speakText("Great, I think we have enough. Let's wrap up.");
+
+      this.onFinishInterview(); // triggers evaluation
+      return;
+    }
+
+    // ✅ Increment count early
+    chatModel.setProperty("/count", count + 1);
+
+
+    // ✅ STEP 2: Store user message
     let messages = chatModel.getProperty("/messages");
 
-    // 👤 User message
     messages.push({
       role: "user",
       text: userInput
@@ -169,6 +244,8 @@ _handleAnswer: async function (userInput) {
 
     chatModel.setProperty("/messages", messages);
 
+
+    // ✅ STEP 3: Call CAP action
     const oAction = oModel.bindContext("/nextStep(...)");
     oAction.setParameter("userAnswer", userInput);
 
@@ -177,60 +254,74 @@ _handleAnswer: async function (userInput) {
     const oData = oAction.getBoundContext().getObject();
     const aiReply = oData.value;
 
-    // 🎯 Extract score
-    let scoreMatch = aiReply.match(/Score:\s*(\d+)/i);
-    let score = scoreMatch ? parseInt(scoreMatch[1]) : 0;
 
-    // 🎯 Split AI response
-    let feedback = "";
-    let nextQuestion = "";
-
-    if (aiReply.includes("Next:")) {
-      const parts = aiReply.split("Next:");
-      feedback = parts[0];
-      nextQuestion = parts[1];
-    } else {
-      nextQuestion = aiReply;
+    // ✅ STEP 4: Detect "wrap up" intent
+    if (/wrap|finish|end|close/i.test(userInput)) {
+      this.speakText("Sure, let's wrap up the interview.");
+      this.onFinishInterview();
+      return;
     }
 
-    // 📊 Update score
-    let total = chatModel.getProperty("/totalScore") + score;
-    let count = chatModel.getProperty("/count") + 1;
 
-    chatModel.setProperty("/totalScore", total);
-    chatModel.setProperty("/count", count);
-
-    // 🧠 Show feedback (NO voice)
-    if (feedback) {
-      messages.push({
-        role: "ai",
-        text: feedback.trim(),
-        score: score
-      });
-    }
+    // ✅ STEP 5: Push AI response
+    messages.push({
+      role: "ai",
+      text: aiReply
+    });
 
     chatModel.setProperty("/messages", messages);
 
-    // ⏳ Delay before asking next question
-    setTimeout(() => {
 
-      messages.push({
-        role: "ai",
-        text: "Question: " + nextQuestion.trim(),
-        score: 0
-      });
-
-      chatModel.setProperty("/messages", messages);
-
-      // 🔊 Speak only question
-      this.speakText(nextQuestion);
-
-    }, 400);
+    // ✅ STEP 6: Speak response
+    this.speakText(aiReply);
 
   } catch (e) {
     console.error(e);
-    MessageToast.show("Error during interview");
+    sap.m.MessageToast.show("Error during interview");
   }
+},
+
+onFinishInterview: async function () {
+
+  const oModel = this.getView().getModel();
+  const chatModel = this.getView().getModel("chat");
+
+  try {
+
+    const messages = chatModel.getProperty("/messages");
+
+    // ✅ Convert to proper transcript string
+    const transcript = messages.map(m => {
+      return `${m.role === "user" ? "Candidate" : "Interviewer"}: ${m.text}`;
+    }).join("\n");
+
+    console.log("Transcript being sent:", transcript);
+
+    const oAction = oModel.bindContext("/evaluateInterview(...)");
+
+    oAction.setParameter("transcript", transcript); // MUST be string
+
+    await oAction.execute();
+
+    const result = oAction.getBoundContext().getObject();
+
+    chatModel.setProperty("/evaluation", result.value);
+
+  } catch (e) {
+    console.error(e);
+    sap.m.MessageToast.show("Error generating evaluation");
+  }
+},
+_isEndIntent: function (text) {
+  const t = text.toLowerCase();
+
+  return (
+    t.includes("end") ||
+    t.includes("stop") ||
+    t.includes("wrap up") ||
+    t.includes("close interview") ||
+    t.includes("finish")
+  );
 }
 
   });

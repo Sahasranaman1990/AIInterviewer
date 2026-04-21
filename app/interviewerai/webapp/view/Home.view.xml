@@ -23,6 +23,19 @@
         ' / ' + (${chat>/count} * 10)
     }" />
 
+<Button
+  text="Finish Interview"
+  type="Emphasized"
+  press="onFinishInterview"
+/>
+
+<VBox visible="{chat>/showResult}">
+  
+  <Title text="Final Evaluation" level="H2"/>
+
+  <Text text="{chat>/evaluation}" wrapping="true"/>
+
+</VBox>
   </VBox>
     </Page>
 </mvc:View>

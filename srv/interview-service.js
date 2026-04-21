@@ -5,29 +5,56 @@ let conversation = [
   {
     role: "system",
    content: `
-You are a friendly, human SAP CAP interviewer.
+You are a friendly, human-like SAP CAP interviewer.
 
-STRICT FORMAT:
-
-If first message:
-Question: <ask first question only>
-
-Otherwise:
-Feedback: <1 short conversational line>
-Score: X/10
-Next: <next question>
+Goal:
+Conduct a smooth, conversational interview.
 
 Rules:
-- NEVER repeat a question
-- Do NOT restart interview
-- Ask follow-ups based on answer
-- Keep it natural and human
-- Keep answers short
+- Ask ONLY one question at a time
+- DO NOT give feedback
+- DO NOT give score
+- DO NOT evaluate the answer
+- Ask next question based on candidate's previous answer
+- Avoid repeating questions
+- Keep it short and natural (1–2 lines)
+- Occasionally refer to candidate by name
+
+Tone:
+- Conversational, not scripted
+- Like a real interviewer
+
+Output:
+- Only the next question (nothing else)
 `
   }
 ];
 
 module.exports = (srv) => {
+
+srv.on("evaluateInterview", async (req) => {
+
+  let transcript = req.data.transcript || "";
+
+  if (Array.isArray(transcript)) {
+    transcript = transcript.map(m => `${m.role}: ${m.text}`).join("\n");
+  }
+
+  const result = await callLLM(`
+Evaluate this interview:
+
+${transcript}
+
+Provide:
+- Score out of 10
+- Key strengths
+- Key weaknesses
+- Final hiring recommendation
+`);
+
+  return { value: result };
+
+});
 
   srv.on("nextStep", async (req) => {
 
@@ -63,25 +90,56 @@ module.exports = (srv) => {
     return aiReply;
   });
 
+
+  async function callLLM(prompt) {
+
+  const response  = await axios.post(
+      "https://adesso-ai-hub.3asabc.de/v1/chat/completions",
+      {
+        model: "qwen-3.5-122b-sovereign",
+       messages: [
+    {
+      role: "user",
+      content: prompt
+    }
+  ],
+        temperature: 0.7
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.AI_API_KEY}`, // 🔴 replace
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+  return response.data.choices[0].message.content;
+};
   srv.on("speak", async (req) => {
 
-  const text = req.data.text;
+ let text = req.data.text;
+
+  // 🔥 Clean text (important)
+  text = text
+    .replace(/Feedback:.*?\n/i, "")
+    .replace(/Score:.*?\n/i, "")
+    .trim();
 
   const response = await axios.post(
     "https://api.elevenlabs.io/v1/text-to-speech/qSV5UqvHBC0Widy71Esh",
     {
       text: text,
-      model_id: "eleven_multilingual_v2", // 🔥 supports Indian tone better
+      model_id: "eleven_flash_v2", // ⚡ fast + good
       voice_settings: {
-        stability: 0.4,
-        similarity_boost: 0.8
+        stability: 0.5,
+        similarity_boost: 0.75
       }
     },
     {
       responseType: "arraybuffer",
       headers: {
-         Authorization: `Bearer ${process.env.ELEVEN_API_KEY}`, // 🔴 replace
-          "Content-Type": "application/json"
+        "xi-api-key": process.env.ELEVEN_API_KEY,
+        "Content-Type": "application/json"
       }
     }
   );
