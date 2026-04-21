@@ -2,29 +2,27 @@
     xmlns:mvc="sap.ui.core.mvc"
     xmlns="sap.m">
     <Page id="page" title="{i18n>title}">
-<VBox class="sapUiSmallMargin">
+         <VBox class="sapUiSmallMargin">
+
+    <Title text="AI Interviewer" />
 
     <Button text="Start Interview" press=".onStartInterview" />
 
     <List items="{chat>/messages}">
-        <StandardListItem
-            title="{chat>text}"
-            description="{
-              = ${chat>role} === 'ai' 
-              ? 'AI (Score: ' + ${chat>score} + ')' 
-              : 'You'
-            }" />
+      <StandardListItem
+        title="{chat>text}"
+        description="{
+          = ${chat>role} === 'ai' 
+          ? 'AI (Score: ' + ${chat>score} + ')' 
+          : 'You'
+        }" />
     </List>
-
-    <HBox>
-        <Button text="🎤 Speak" press=".onSpeak" />
-    </HBox>
 
     <Text text="{
       = 'Total Score: ' + ${chat>/totalScore} + 
         ' / ' + (${chat>/count} * 10)
     }" />
 
-</VBox>
+  </VBox>
     </Page>
 </mvc:View>
